@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/Memcached-Java-Client-SX.iml" filepath="$PROJECT_DIR$/.idea/Memcached-Java-Client-SX.iml" />
+      <module fileurl="file://$PROJECT_DIR$/Memcached-Java-Client-SX.iml" filepath="$PROJECT_DIR$/Memcached-Java-Client-SX.iml" />
     </modules>
   </component>
 </project>
