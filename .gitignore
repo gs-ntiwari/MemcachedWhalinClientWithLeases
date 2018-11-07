@@ -11,3 +11,5 @@ dist/
 scratch/
 .cachedir/
 memcached-release*
+.idea
+/.idea
