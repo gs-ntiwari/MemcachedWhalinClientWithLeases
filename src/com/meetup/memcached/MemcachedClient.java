@@ -18,6 +18,7 @@
 package com.meetup.memcached;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.zip.*;
 import java.nio.*;          
 import java.net.InetAddress;
@@ -163,6 +164,10 @@ public class MemcachedClient {
 	// return codes
 	private static final String VALUE        = "VALUE";			// start of value line from server
 	private static final String STATS        = "STAT";			// start of stats line from server
+    private static final String LEASE        = "LEASE";			// start of stats line from server
+    private static final String BACK_OFF     = "BACK_OFF";		// start of stats line from server
+    private static final int  MAX_BACK_OFF   = 20;		// start of stats line from server
+    private static final String ABORT        = "ABORT";			// start of stats line from server
 	private static final String ITEM         = "ITEM";			// start of item line from server
 	private static final String DELETED      = "DELETED";		// successful deletion
 	private static final String NOTFOUND     = "NOT_FOUND";		// record not found for delete or incr/decr
@@ -218,6 +223,10 @@ public class MemcachedClient {
 
 	// optional error handler
 	private ErrorHandler errorHandler;
+
+	private String clientId;
+	private Map<String, Boolean> sessions;
+
 
 	/**
 	 * Creates a new instance of MemCachedClient.
@@ -293,6 +302,18 @@ public class MemcachedClient {
 
 		// get a pool instance to work with for the life of this instance
 		this.pool               = SockIOPool.getInstance( poolName );
+		this.clientId           = UUID.randomUUID().toString();
+		populateSessionIds(clientId);
+	}
+
+	private void populateSessionIds(String clientId) {
+		Map<String, Boolean> sessionMap=Coordinator.getSessions(clientId);
+		if(sessions==null)
+		{
+			sessions = new ConcurrentHashMap<String, Boolean>();
+		}
+
+		sessions.putAll(sessionMap);
 	}
 
 	/** 
@@ -404,6 +425,25 @@ public class MemcachedClient {
 		return delete( key, null, expiry );
 	}
 
+	public String beginSession()
+	{
+		while(true) {
+			Set<String> sessionList = sessions.keySet();
+			for (String sessionId : sessionList) {
+				if (sessions.get(sessionId)) {
+					sessions.put(sessionId, false);
+					return sessionId;
+				}
+			}
+			sessions.putAll(Coordinator.getSessions(clientId));
+		}
+	}
+
+	public void endSession(String sessionId)
+	{
+		sessions.put(sessionId,true);
+	}
+
 	/**
 	 * Deletes an object from cache given cache key, a delete time, and an optional hashcode.
 	 *
@@ -418,6 +458,7 @@ public class MemcachedClient {
 	 * @param expiry when to expire the record.
 	 * @return <code>true</code>, if the data was deleted successfully
 	 */
+
 	public boolean delete( String key, Integer hashCode, Date expiry ) {
 
 		if ( key == null ) {
@@ -1254,6 +1295,166 @@ public class MemcachedClient {
 	 */
 	public Object get( String key, Integer hashCode, boolean asString ) {
 
+		if (key == null) {
+			log.error("key is null for get()");
+			return null;
+		}
+
+		try {
+			key = sanitizeKey(key);
+		} catch (UnsupportedEncodingException e) {
+
+			// if we have an errorHandler, use its hook
+			if (errorHandler != null)
+				errorHandler.handleErrorOnGet(this, e, key);
+
+			log.error("failed to sanitize your key!", e);
+			return null;
+		}
+
+		// get SockIO obj using cache key
+		SockIOPool.SockIO sock = pool.getSock(key, hashCode);
+
+		if (sock == null) {
+			if (errorHandler != null)
+				errorHandler.handleErrorOnGet(this, new IOException("no socket to server available"), key);
+			return null;
+		}
+
+		try {
+			String cmd = "get " + key + "\r\n";
+
+			if (log.isDebugEnabled())
+				log.debug("++++ memcache get command: " + cmd);
+
+			sock.write(cmd.getBytes());
+			sock.flush();
+
+			// ready object
+			Object o = null;
+
+			while (true) {
+				String line = sock.readLine();
+
+				if (log.isDebugEnabled())
+					log.debug("++++ line: " + line);
+
+				if (line.startsWith(VALUE)) {
+					String[] info = line.split(" ");
+					int flag = Integer.parseInt(info[2]);
+					int length = Integer.parseInt(info[3]);
+
+					if (log.isDebugEnabled()) {
+						log.debug("++++ key: " + key);
+						log.debug("++++ flags: " + flag);
+						log.debug("++++ length: " + length);
+					}
+
+					// read obj into buffer
+					byte[] buf = new byte[length];
+					sock.read(buf);
+					sock.clearEOL();
+
+					if ((flag & F_COMPRESSED) == F_COMPRESSED) {
+						try {
+							// read the input stream, and write to a byte array output stream since
+							// we have to read into a byte array, but we don't know how large it
+							// will need to be, and we don't want to resize it a bunch
+							GZIPInputStream gzi = new GZIPInputStream(new ByteArrayInputStream(buf));
+							ByteArrayOutputStream bos = new ByteArrayOutputStream(buf.length);
+
+							int count;
+							byte[] tmp = new byte[2048];
+							while ((count = gzi.read(tmp)) != -1) {
+								bos.write(tmp, 0, count);
+							}
+
+							// store uncompressed back to buffer
+							buf = bos.toByteArray();
+							gzi.close();
+						} catch (IOException e) {
+
+							// if we have an errorHandler, use its hook
+							if (errorHandler != null)
+								errorHandler.handleErrorOnGet(this, e, key);
+
+							log.error("++++ IOException thrown while trying to uncompress input stream for key: " + key + " -- " + e.getMessage());
+							throw new NestedIOException("++++ IOException thrown while trying to uncompress input stream for key: " + key, e);
+						}
+					}
+
+					// we can only take out serialized objects
+					if ((flag & F_SERIALIZED) != F_SERIALIZED) {
+						if (primitiveAsString || asString) {
+							// pulling out string value
+							if (log.isInfoEnabled())
+								log.info("++++ retrieving object and stuffing into a string.");
+							o = new String(buf, defaultEncoding);
+						} else {
+							// decoding object
+							try {
+								o = NativeHandler.decode(buf, flag);
+							} catch (Exception e) {
+
+								// if we have an errorHandler, use its hook
+								if (errorHandler != null)
+									errorHandler.handleErrorOnGet(this, e, key);
+
+								log.error("++++ Exception thrown while trying to deserialize for key: " + key, e);
+								throw new NestedIOException(e);
+							}
+						}
+					} else {
+						// deserialize if the data is serialized
+						ContextObjectInputStream ois =
+								new ContextObjectInputStream(new ByteArrayInputStream(buf), classLoader);
+						try {
+							o = ois.readObject();
+							if (log.isInfoEnabled())
+								log.info("++++ deserializing " + o.getClass());
+						} catch (Exception e) {
+							if (errorHandler != null)
+								errorHandler.handleErrorOnGet(this, e, key);
+
+							o = null;
+							log.error("++++ Exception thrown while trying to deserialize for key: " + key + " -- " + e.getMessage());
+						}
+					}
+				} else if (END.equals(line)) {
+					if (log.isDebugEnabled())
+						log.debug("++++ finished reading from cache server");
+					break;
+				}
+			}
+
+			sock.close();
+			sock = null;
+			return o;
+		} catch (IOException e) {
+
+			// if we have an errorHandler, use its hook
+			if (errorHandler != null)
+				errorHandler.handleErrorOnGet(this, e, key);
+
+			// exception thrown
+			log.error("++++ exception thrown while trying to get object from cache for key: " + key + " -- " + e.getMessage());
+
+			try {
+				sock.trueClose();
+			} catch (IOException ioe) {
+				log.error("++++ failed to close socket : " + sock.toString());
+			}
+			sock = null;
+		}
+
+		if (sock != null)
+			sock.close();
+
+		return null;
+	}
+
+	public Object lget( String key, Integer hashCode, boolean asString, String sess_id ) {
+
 		if ( key == null ) {
 			log.error( "key is null for get()" );
 			return null;
@@ -1274,129 +1475,150 @@ public class MemcachedClient {
 
 		// get SockIO obj using cache key
 		SockIOPool.SockIO sock = pool.getSock( key, hashCode );
-	    
-	    if ( sock == null ) {
+
+		if ( sock == null ) {
 			if ( errorHandler != null )
 				errorHandler.handleErrorOnGet( this, new IOException( "no socket to server available" ), key );
 			return null;
 		}
 
 		try {
-			String cmd = "get " + key + "\r\n";
+			String cmd = "lget " + key + " "+sess_id+"\r\n";
 
 			if ( log.isDebugEnabled() )
 				log.debug("++++ memcache get command: " + cmd);
-			
-			sock.write( cmd.getBytes() );
-			sock.flush();
 
 			// ready object
 			Object o = null;
+			int back_off=0;
 
-			while ( true ) {
-				String line = sock.readLine();
+			while ( true) {
+                sock.write(cmd.getBytes());
+                sock.flush();
+                String line = sock.readLine();
 
-				if ( log.isDebugEnabled() )
-					log.debug( "++++ line: " + line );
+                if (log.isDebugEnabled())
+                    log.debug("++++ line: " + line);
 
-				if ( line.startsWith( VALUE ) ) {
-					String[] info = line.split(" ");
-					int flag      = Integer.parseInt( info[2] );
-					int length    = Integer.parseInt( info[3] );
+                if (line != null && line.startsWith(VALUE)) {
+                    String[] info = line.split(" ");
+                    int flag = Integer.parseInt(info[2]);
+                    int length = Integer.parseInt(info[3]);
 
-					if ( log.isDebugEnabled() ) {
-						log.debug( "++++ key: " + key );
-						log.debug( "++++ flags: " + flag );
-						log.debug( "++++ length: " + length );
+                    if (log.isDebugEnabled()) {
+                        log.debug("++++ key: " + key);
+                        log.debug("++++ flags: " + flag);
+                        log.debug("++++ length: " + length);
+                    }
+
+                    // read obj into buffer
+                    byte[] buf = new byte[length];
+                    sock.read(buf);
+                    sock.clearEOL();
+
+                    if ((flag & F_COMPRESSED) == F_COMPRESSED) {
+                        try {
+                            // read the input stream, and write to a byte array output stream since
+                            // we have to read into a byte array, but we don't know how large it
+                            // will need to be, and we don't want to resize it a bunch
+                            GZIPInputStream gzi = new GZIPInputStream(new ByteArrayInputStream(buf));
+                            ByteArrayOutputStream bos = new ByteArrayOutputStream(buf.length);
+
+                            int count;
+                            byte[] tmp = new byte[2048];
+                            while ((count = gzi.read(tmp)) != -1) {
+                                bos.write(tmp, 0, count);
+                            }
+
+                            // store uncompressed back to buffer
+                            buf = bos.toByteArray();
+                            gzi.close();
+                        } catch (IOException e) {
+
+                            // if we have an errorHandler, use its hook
+                            if (errorHandler != null)
+                                errorHandler.handleErrorOnGet(this, e, key);
+
+                            log.error("++++ IOException thrown while trying to uncompress input stream for key: " + key + " -- " + e.getMessage());
+                            throw new NestedIOException("++++ IOException thrown while trying to uncompress input stream for key: " + key, e);
+                        }
+                    }
+
+                    // we can only take out serialized objects
+                    if ((flag & F_SERIALIZED) != F_SERIALIZED) {
+                        if (primitiveAsString || asString) {
+                            // pulling out string value
+                            if (log.isInfoEnabled())
+                                log.info("++++ retrieving object and stuffing into a string.");
+                            o = new String(buf, defaultEncoding);
+                        } else {
+                            // decoding object
+                            try {
+                                o = NativeHandler.decode(buf, flag);
+                            } catch (Exception e) {
+
+                                // if we have an errorHandler, use its hook
+                                if (errorHandler != null)
+                                    errorHandler.handleErrorOnGet(this, e, key);
+
+                                log.error("++++ Exception thrown while trying to deserialize for key: " + key, e);
+                                throw new NestedIOException(e);
+                            }
+                        }
+                    } else {
+                        // deserialize if the data is serialized
+                        ContextObjectInputStream ois =
+                                new ContextObjectInputStream(new ByteArrayInputStream(buf), classLoader);
+                        try {
+                            o = ois.readObject();
+                            if (log.isInfoEnabled())
+                                log.info("++++ deserializing " + o.getClass());
+                        } catch (Exception e) {
+                            if (errorHandler != null)
+                                errorHandler.handleErrorOnGet(this, e, key);
+
+                            o = null;
+                            log.error("++++ Exception thrown while trying to deserialize for key: " + key + " -- " + e.getMessage());
+                        }
+                    }
+                } else if (line.startsWith(LEASE)) {
+                    if ( log.isInfoEnabled() )
+                        log.info( "++++ value not found, I lease granted for key: " + key );
+                    o = null;
+                    break;
+                } else if (line.startsWith(BACK_OFF)) {
+                    back_off++;
+                    if(back_off==MAX_BACK_OFF)
+					{
+						if ( log.isInfoEnabled() )
+							log.info( "++++ lease not available for key: " + key );
+
+						sock.close();
+						sock = null;
+						throw new IncompatibleLeaseException("++++ lget session aborted." );
 					}
-					
-					// read obj into buffer
-					byte[] buf = new byte[length];
-					sock.read( buf );
-					sock.clearEOL();
-
-					if ( (flag & F_COMPRESSED) == F_COMPRESSED ) {
-						try {
-							// read the input stream, and write to a byte array output stream since
-							// we have to read into a byte array, but we don't know how large it
-							// will need to be, and we don't want to resize it a bunch
-							GZIPInputStream gzi = new GZIPInputStream( new ByteArrayInputStream( buf ) );
-							ByteArrayOutputStream bos = new ByteArrayOutputStream( buf.length );
-							
-							int count;
-							byte[] tmp = new byte[2048];
-							while ( (count = gzi.read(tmp)) != -1 ) {
-								bos.write( tmp, 0, count );
-							}
-
-							// store uncompressed back to buffer
-							buf = bos.toByteArray();
-							gzi.close();
-						}
-						catch ( IOException e ) {
-
-							// if we have an errorHandler, use its hook
-							if ( errorHandler != null )
-								errorHandler.handleErrorOnGet( this, e, key );
-
-							log.error( "++++ IOException thrown while trying to uncompress input stream for key: " + key + " -- " + e.getMessage() );
-							throw new NestedIOException( "++++ IOException thrown while trying to uncompress input stream for key: " + key, e );
-						}
+                    else {
+						continue;
 					}
+                } else if (line.startsWith(ABORT)) {
+                    if ( log.isInfoEnabled() )
+                        log.info( "++++ lease not available for key: " + key );
 
-					// we can only take out serialized objects
-					if ( ( flag & F_SERIALIZED ) != F_SERIALIZED ) {
-						if ( primitiveAsString || asString ) {
-							// pulling out string value
-							if ( log.isInfoEnabled() )
-								log.info( "++++ retrieving object and stuffing into a string." );
-							o = new String( buf, defaultEncoding );
-						}
-						else {
-							// decoding object
-							try {
-								o = NativeHandler.decode( buf, flag );    
-							}
-							catch ( Exception e ) {
+                    sock.close();
+                    sock = null;
+                    throw new IncompatibleLeaseException("++++ lget session aborted." );
+                }
+                else if (END.equals(line)) {
+                    if (log.isDebugEnabled())
+                        log.debug("++++ finished reading from cache server");
+                    break;
+                }
+            }
 
-								// if we have an errorHandler, use its hook
-								if ( errorHandler != null )
-									errorHandler.handleErrorOnGet( this, e, key );
-
-								log.error( "++++ Exception thrown while trying to deserialize for key: " + key, e );
-								throw new NestedIOException( e );
-							}
-						}
-					}
-					else {
-						// deserialize if the data is serialized
-						ContextObjectInputStream ois =
-							new ContextObjectInputStream( new ByteArrayInputStream( buf ), classLoader );
-						try {
-							o = ois.readObject();
-							if ( log.isInfoEnabled() )
-								log.info( "++++ deserializing " + o.getClass() );
-						}
-						catch ( Exception e ) {
-							if ( errorHandler != null )
-								errorHandler.handleErrorOnGet( this, e, key );
-
-							o = null;
-							log.error( "++++ Exception thrown while trying to deserialize for key: " + key + " -- " + e.getMessage() );
-						}
-					}
-				}
-				else if ( END.equals( line ) ) {
-					if ( log.isDebugEnabled() )
-						log.debug( "++++ finished reading from cache server" );
-					break;
-				}
-			}
-			
 			sock.close();
 			sock = null;
 			return o;
-	    }
+		}
 		catch ( IOException e ) {
 
 			// if we have an errorHandler, use its hook
@@ -1413,7 +1635,7 @@ public class MemcachedClient {
 				log.error( "++++ failed to close socket : " + sock.toString() );
 			}
 			sock = null;
-	    }
+		}
 
 		if ( sock != null )
 			sock.close();
@@ -1620,8 +1842,7 @@ public class MemcachedClient {
 	 *
 	 * Pass a SockIO object which is ready to receive data and a HashMap<br/>
 	 * to store the results.
-	 * 
-	 * @param sock socket waiting to pass back data
+	 *
 	 * @param hm hashmap to store data into
 	 * @param asString if true, and if we are using NativehHandler, return string val
 	 * @throws IOException if io exception happens while reading from socket
