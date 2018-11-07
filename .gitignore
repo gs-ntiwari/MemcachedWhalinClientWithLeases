@@ -13,3 +13,4 @@ scratch/
 memcached-release*
 .idea
 /.idea
+*.iml
