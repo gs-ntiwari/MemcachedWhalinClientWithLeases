@@ -410,8 +410,8 @@ public class MemcachedClient {
 	 * @param key the key to be removed
 	 * @return <code>true</code>, if the data was deleted successfully
 	 */
-	public boolean delete( String key ) {
-		return delete( key, null, null );
+	public boolean ldelete( String key , String sess_id) {
+		return ldelete( key, null, null, sess_id );
 	}
 
 	/** 
@@ -421,10 +421,37 @@ public class MemcachedClient {
 	 * @param expiry when to expire the record.
 	 * @return <code>true</code>, if the data was deleted successfully
 	 */
+	public boolean ldelete( String key, Date expiry, String sess_id ) {
+		return ldelete( key, null, expiry ,sess_id);
+	}
+
+	/**
+	 * Deletes an object from cache given cache key.
+	 *
+	 * @param key the key to be removed
+	 * @return <code>true</code>, if the data was deleted successfully
+	 */
+	public boolean delete( String key ) {
+		return delete( key, null, null );
+	}
+
+	/**
+	 * Deletes an object from cache given cache key and expiration date.
+	 *
+	 * @param key the key to be removed
+	 * @param expiry when to expire the record.
+	 * @return <code>true</code>, if the data was deleted successfully
+	 */
 	public boolean delete( String key, Date expiry ) {
 		return delete( key, null, expiry );
 	}
 
+
+	/**
+	 * Assigns a sessionId to a session. if no sessionid available, request coordinator for another range
+	 *
+	 * @return <code>sessionId</code>
+	 */
 	public String beginSession()
 	{
 		while(true) {
@@ -439,6 +466,12 @@ public class MemcachedClient {
 		}
 	}
 
+	/**
+	 * Release session and make it available for other sessions
+	 *
+	 * @param sessionId
+	 * @return releases the sessionId for other sessions
+	 */
 	public void endSession(String sessionId)
 	{
 		sessions.put(sessionId,true);
@@ -547,6 +580,115 @@ public class MemcachedClient {
 
 		return false;
 	}
+
+	/**
+	 * Deletes an object from cache given cache key, a delete time, and an optional hashcode.
+	 *
+	 *  The item is immediately made non retrievable.<br/>
+	 *  Keep in mind {@link #add(String, Object) add} and {@link #replace(String, Object) replace}<br/>
+	 *  will fail when used with the same key will fail, until the server reaches the<br/>
+	 *  specified time. However, {@link #set(String, Object) set} will succeed,<br/>
+	 *  and the new value will not be deleted.
+	 *
+	 * @param key the key to be removed
+	 * @param hashCode if not null, then the int hashcode to use
+	 * @param expiry when to expire the record.
+	 * @return <code>true</code>, if the data was deleted successfully
+	 */
+
+	public boolean ldelete( String key, Integer hashCode, Date expiry, String sess_id ) {
+
+		if ( key == null ) {
+			log.error( "null value for key passed to delete()" );
+			return false;
+		}
+
+		try {
+			key = sanitizeKey( key );
+		}
+		catch ( UnsupportedEncodingException e ) {
+
+			// if we have an errorHandler, use its hook
+			if ( errorHandler != null )
+				errorHandler.handleErrorOnDelete( this, e, key );
+
+			log.error( "failed to sanitize your key!", e );
+			return false;
+		}
+
+		// get SockIO obj from hash or from key
+		SockIOPool.SockIO sock = pool.getSock( key, hashCode );
+
+		// return false if unable to get SockIO obj
+		if ( sock == null ) {
+			if ( errorHandler != null )
+				errorHandler.handleErrorOnDelete( this, new IOException( "no socket to server available" ), key );
+			return false;
+		}
+
+		// build command
+		StringBuilder command = new StringBuilder( "ldelete " ).append(sess_id).append(" ").append(key );
+		if ( expiry != null )
+			command.append( " " + expiry.getTime() / 1000 );
+
+		command.append( "\r\n" );
+
+		try {
+			sock.write( command.toString().getBytes() );
+			sock.flush();
+
+			// if we get appropriate response back, then we return true
+			String line = sock.readLine();
+			if ( DELETED.equals( line ) ) {
+				if ( log.isInfoEnabled() )
+					log.info( "++++ deletion of key: " + key + " from cache was a success" );
+
+				// return sock to pool and bail here
+				sock.close();
+				sock = null;
+				return true;
+			}
+			else if ( NOTFOUND.equals( line ) ) {
+				if ( log.isInfoEnabled() )
+					log.info( "++++ deletion of key: " + key + " from cache failed as the key was not found" );
+			}
+			else if ( ABORT.equals( line ) ) {
+				if ( log.isInfoEnabled() )
+					log.info( "++++ deletion of key: " + key + " from cache failed as could not acquire lease" );
+				throw new IncompatibleLeaseException("++++ deletion of key: " + key + " from cache failed as could not acquire lease" );
+			}
+			else {
+				log.error( "++++ error deleting key: " + key );
+				log.error( "++++ server response: " + line );
+			}
+		}
+		catch ( IOException e ) {
+
+			// if we have an errorHandler, use its hook
+			if ( errorHandler != null )
+				errorHandler.handleErrorOnDelete( this, e, key );
+
+			// exception thrown
+			log.error( "++++ exception thrown while writing bytes to server on delete" );
+			log.error( e.getMessage(), e );
+
+			try {
+				sock.trueClose();
+			}
+			catch ( IOException ioe ) {
+				log.error( "++++ failed to close socket : " + sock.toString() );
+			}
+
+			sock = null;
+		}
+
+		if ( sock != null ) {
+			sock.close();
+			sock = null;
+		}
+
+		return false;
+	}
     
 	/**
 	 * Stores data on the server; only the key and the value are specified.
@@ -594,6 +736,54 @@ public class MemcachedClient {
 	 */
 	public boolean set( String key, Object value, Date expiry, Integer hashCode ) {
 		return set( "set", key, value, expiry, hashCode, primitiveAsString );
+	}
+
+	/**
+	 * Stores data on the server; only the key and the value are specified.
+	 *
+	 * @param key key to store data under
+	 * @param value value to store
+	 * @return true, if the data was successfully stored
+	 */
+	public boolean lset( String key, Object value , String sess_id) {
+		return lset( "set", key, value, null, null, primitiveAsString, sess_id );
+	}
+
+	/**
+	 * Stores data on the server; only the key and the value are specified.
+	 *
+	 * @param key key to store data under
+	 * @param value value to store
+	 * @param hashCode if not null, then the int hashcode to use
+	 * @return true, if the data was successfully stored
+	 */
+	public boolean lset( String key, Object value, Integer hashCode ,String sess_id) {
+		return lset( "lset", key, value, null, hashCode, primitiveAsString, sess_id );
+	}
+
+	/**
+	 * Stores data on the server; the key, value, and an expiration time are specified.
+	 *
+	 * @param key key to store data under
+	 * @param value value to store
+	 * @param expiry when to expire the record
+	 * @return true, if the data was successfully stored
+	 */
+	public boolean lset( String key, Object value, Date expiry ,String sess_id) {
+		return lset( "lset", key, value, expiry, null, primitiveAsString, sess_id );
+	}
+
+	/**
+	 * Stores data on the server; the key, value, and an expiration time are specified.
+	 *
+	 * @param key key to store data under
+	 * @param value value to store
+	 * @param expiry when to expire the record
+	 * @param hashCode if not null, then the int hashcode to use
+	 * @return true, if the data was successfully stored
+	 */
+	public boolean lset( String key, Object value, Date expiry, Integer hashCode,String sess_id ) {
+		return lset( "lset", key, value, expiry, hashCode, primitiveAsString, sess_id );
 	}
 
 	/**
@@ -645,6 +835,54 @@ public class MemcachedClient {
 	}
 
 	/**
+	 * Adds data to the server; only the key and the value are specified.
+	 *
+	 * @param key key to store data under
+	 * @param value value to store
+	 * @return true, if the data was successfully stored
+	 */
+	public boolean ladd( String key, Object value, String sess_id  ) {
+		return lset( "ladd", key, value, null, null, primitiveAsString, sess_id );
+	}
+
+	/**
+	 * Adds data to the server; the key, value, and an optional hashcode are passed in.
+	 *
+	 * @param key key to store data under
+	 * @param value value to store
+	 * @param hashCode if not null, then the int hashcode to use
+	 * @return true, if the data was successfully stored
+	 */
+	public boolean ladd( String key, Object value, Integer hashCode, String sess_id  ) {
+		return lset( "ladd", key, value, null, hashCode, primitiveAsString, sess_id );
+	}
+
+	/**
+	 * Adds data to the server; the key, value, and an expiration time are specified.
+	 *
+	 * @param key key to store data under
+	 * @param value value to store
+	 * @param expiry when to expire the record
+	 * @return true, if the data was successfully stored
+	 */
+	public boolean ladd( String key, Object value, Date expiry,String sess_id  ) {
+		return lset( "ladd", key, value, expiry, null, primitiveAsString,sess_id );
+	}
+
+	/**
+	 * Adds data to the server; the key, value, and an expiration time are specified.
+	 *
+	 * @param key key to store data under
+	 * @param value value to store
+	 * @param expiry when to expire the record
+	 * @param hashCode if not null, then the int hashcode to use
+	 * @return true, if the data was successfully stored
+	 */
+	public boolean ladd( String key, Object value, Date expiry, Integer hashCode, String sess_id ) {
+		return lset( "ladd", key, value, expiry, hashCode, primitiveAsString,sess_id );
+	}
+
+	/**
 	 * Updates data on the server; only the key and the value are specified.
 	 *
 	 * @param key key to store data under
@@ -692,6 +930,54 @@ public class MemcachedClient {
 		return set( "replace", key, value, expiry, hashCode, primitiveAsString );
 	}
 
+	/**
+	 * Updates data on the server; only the key and the value are specified.
+	 *
+	 * @param key key to store data under
+	 * @param value value to store
+	 * @return true, if the data was successfully stored
+	 */
+	public boolean lreplace( String key, Object value, String sess_id ) {
+		return lset( "lreplace", key, value, null, null, primitiveAsString, sess_id );
+	}
+
+	/**
+	 * Updates data on the server; only the key and the value and an optional hash are specified.
+	 *
+	 * @param key key to store data under
+	 * @param value value to store
+	 * @param hashCode if not null, then the int hashcode to use
+	 * @return true, if the data was successfully stored
+	 */
+	public boolean lreplace( String key, Object value, Integer hashCode, String sess_id ) {
+		return lset( "lreplace", key, value, null, hashCode, primitiveAsString, sess_id);
+	}
+
+	/**
+	 * Updates data on the server; the key, value, and an expiration time are specified.
+	 *
+	 * @param key key to store data under
+	 * @param value value to store
+	 * @param expiry when to expire the record
+	 * @return true, if the data was successfully stored
+	 */
+	public boolean lreplace( String key, Object value, Date expiry, String sess_id ) {
+		return lset( "lreplace", key, value, expiry, null, primitiveAsString, sess_id );
+	}
+
+	/**
+	 * Updates data on the server; the key, value, and an expiration time are specified.
+	 *
+	 * @param key key to store data under
+	 * @param value value to store
+	 * @param expiry when to expire the record
+	 * @param hashCode if not null, then the int hashcode to use
+	 * @return true, if the data was successfully stored
+	 */
+	public boolean lreplace( String key, Object value, Date expiry, Integer hashCode, String sess_id ) {
+		return lset( "lreplace", key, value, expiry, hashCode, primitiveAsString, sess_id);
+	}
+
 	/** 
 	 * Stores data to cache.
 	 *
@@ -712,7 +998,7 @@ public class MemcachedClient {
 	 * @param asString store this object as a string?
 	 * @return true/false indicating success
 	 */
-	private boolean set( String cmdname, String key, Object value, Date expiry, Integer hashCode, boolean asString ) {
+	private boolean lset( String cmdname, String key, Object value, Date expiry, Integer hashCode, boolean asString, String sess_Id) {
 
 		if ( cmdname == null || cmdname.trim().equals( "" ) || key == null ) {
 			log.error( "key is null or cmd is null/empty for set()" );
@@ -861,6 +1147,236 @@ public class MemcachedClient {
 
 		// now write the data to the cache server
 		try {
+			String cmd = String.format( "%s %s %s %d %d %d\r\n", cmdname, sess_Id, key, flags, (expiry.getTime() / 1000), val.length );
+			sock.write( cmd.getBytes() );
+			sock.write( val );
+			sock.write( "\r\n".getBytes() );
+			sock.flush();
+
+			// get result code
+			String line = sock.readLine();
+			if ( log.isInfoEnabled() )
+				log.info( "++++ memcache cmd (result code): " + cmd + " (" + line + ")" );
+
+			if ( STORED.equals( line ) ) {
+				if ( log.isInfoEnabled() )
+					log.info("++++ data successfully stored for key: " + key );
+				sock.close();
+				sock = null;
+				return true;
+			}
+			else if ( NOTSTORED.equals( line ) ) {
+				if ( log.isInfoEnabled() )
+					log.info( "++++ data not stored in cache for key: " + key );
+			}
+			else if(ABORT.equals( line ) )
+			{
+				if ( log.isInfoEnabled() )
+					log.info( "++++ could not find lease for key: " + key );
+				throw new IncompatibleLeaseException("++++ could not find lease for key: "+key);
+			}
+			else {
+				log.error( "++++ error storing data in cache for key: " + key + " -- length: " + val.length );
+				log.error( "++++ server response: " + line );
+			}
+		}
+		catch ( IOException e ) {
+
+			// if we have an errorHandler, use its hook
+			if ( errorHandler != null )
+				errorHandler.handleErrorOnSet( this, e, key );
+
+			// exception thrown
+			log.error( "++++ exception thrown while writing bytes to server on set" );
+			log.error( e.getMessage(), e );
+
+			try {
+				sock.trueClose();
+			}
+			catch ( IOException ioe ) {
+				log.error( "++++ failed to close socket : " + sock.toString() );
+			}
+
+			sock = null;
+		}
+
+		if ( sock != null ) {
+			sock.close();
+			sock = null;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Stores data to cache.
+	 *
+	 * If data does not already exist for this key on the server, or if the key is being<br/>
+	 * deleted, the specified value will not be stored.<br/>
+	 * The server will automatically delete the value when the expiration time has been reached.<br/>
+	 * <br/>
+	 * If compression is enabled, and the data is longer than the compression threshold<br/>
+	 * the data will be stored in compressed form.<br/>
+	 * <br/>
+	 * As of the current release, all objects stored will use java serialization.
+	 *
+	 * @param cmdname action to take (set, add, replace)
+	 * @param key key to store cache under
+	 * @param value object to cache
+	 * @param expiry expiration
+	 * @param hashCode if not null, then the int hashcode to use
+	 * @param asString store this object as a string?
+	 * @return true/false indicating success
+	 */
+	private boolean set( String cmdname, String key, Object value, Date expiry, Integer hashCode, boolean asString ) {
+
+		if ( cmdname == null || cmdname.trim().equals( "" ) || key == null ) {
+			log.error( "key is null or cmd is null/empty for set()" );
+			return false;
+		}
+
+		try {
+			key = sanitizeKey( key );
+		}
+		catch ( UnsupportedEncodingException e ) {
+
+			// if we have an errorHandler, use its hook
+			if ( errorHandler != null )
+				errorHandler.handleErrorOnSet( this, e, key );
+
+			log.error( "failed to sanitize your key!", e );
+			return false;
+		}
+
+		if ( value == null ) {
+			log.error( "trying to store a null value to cache" );
+			return false;
+		}
+
+		// get SockIO obj
+		SockIOPool.SockIO sock = pool.getSock( key, hashCode );
+
+		if ( sock == null ) {
+			if ( errorHandler != null )
+				errorHandler.handleErrorOnSet( this, new IOException( "no socket to server available" ), key );
+			return false;
+		}
+
+		if ( expiry == null )
+			expiry = new Date(0);
+
+		// store flags
+		int flags = 0;
+
+		// byte array to hold data
+		byte[] val;
+
+		if ( NativeHandler.isHandled( value ) ) {
+
+			if ( asString ) {
+				// useful for sharing data between java and non-java
+				// and also for storing ints for the increment method
+				try {
+					if ( log.isInfoEnabled() )
+						log.info( "++++ storing data as a string for key: " + key + " for class: " + value.getClass().getName() );
+					val = value.toString().getBytes( defaultEncoding );
+				}
+				catch ( UnsupportedEncodingException ue ) {
+
+					// if we have an errorHandler, use its hook
+					if ( errorHandler != null )
+						errorHandler.handleErrorOnSet( this, ue, key );
+
+					log.error( "invalid encoding type used: " + defaultEncoding, ue );
+					sock.close();
+					sock = null;
+					return false;
+				}
+			}
+			else {
+				try {
+					if ( log.isInfoEnabled() )
+						log.info( "Storing with native handler..." );
+					flags |= NativeHandler.getMarkerFlag( value );
+					val    = NativeHandler.encode( value );
+				}
+				catch ( Exception e ) {
+
+					// if we have an errorHandler, use its hook
+					if ( errorHandler != null )
+						errorHandler.handleErrorOnSet( this, e, key );
+
+					log.error( "Failed to native handle obj", e );
+
+					sock.close();
+					sock = null;
+					return false;
+				}
+			}
+		}
+		else {
+			// always serialize for non-primitive types
+			try {
+				if ( log.isInfoEnabled() )
+					log.info( "++++ serializing for key: " + key + " for class: " + value.getClass().getName() );
+				ByteArrayOutputStream bos = new ByteArrayOutputStream();
+				(new ObjectOutputStream( bos )).writeObject( value );
+				val = bos.toByteArray();
+				flags |= F_SERIALIZED;
+			}
+			catch ( IOException e ) {
+
+				// if we have an errorHandler, use its hook
+				if ( errorHandler != null )
+					errorHandler.handleErrorOnSet( this, e, key );
+
+				// if we fail to serialize, then
+				// we bail
+				log.error( "failed to serialize obj", e );
+				log.error( value.toString() );
+
+				// return socket to pool and bail
+				sock.close();
+				sock = null;
+				return false;
+			}
+		}
+
+		// now try to compress if we want to
+		// and if the length is over the threshold
+		if ( compressEnable && val.length > compressThreshold ) {
+
+			try {
+				if ( log.isInfoEnabled() ) {
+					log.info( "++++ trying to compress data" );
+					log.info( "++++ size prior to compression: " + val.length );
+				}
+				ByteArrayOutputStream bos = new ByteArrayOutputStream( val.length );
+				GZIPOutputStream gos = new GZIPOutputStream( bos );
+				gos.write( val, 0, val.length );
+				gos.finish();
+				gos.close();
+
+				// store it and set compression flag
+				val = bos.toByteArray();
+				flags |= F_COMPRESSED;
+
+				if ( log.isInfoEnabled() )
+					log.info( "++++ compression succeeded, size after: " + val.length );
+			}
+			catch ( IOException e ) {
+
+				// if we have an errorHandler, use its hook
+				if ( errorHandler != null )
+					errorHandler.handleErrorOnSet( this, e, key );
+
+				log.error( "IOException while compressing stream: " + e.getMessage() );
+				log.error( "storing data uncompressed" );
+			}
+		}
+
+		// now write the data to the cache server
+		try {
 			String cmd = String.format( "%s %s %d %d %d\r\n", cmdname, key, flags, (expiry.getTime() / 1000), val.length );
 			sock.write( cmd.getBytes() );
 			sock.write( val );
@@ -915,6 +1431,8 @@ public class MemcachedClient {
 
 		return false;
 	}
+
+
 
 	/** 
 	 * Store a counter to memcached given a key
@@ -998,8 +1516,8 @@ public class MemcachedClient {
 	 * @param key key where the data is stored
 	 * @return value of incrementer
 	 */
-	public long addOrIncr( String key ) {
-		return addOrIncr( key, 0, null );
+	public long laddOrIncr( String key , String sess_id) {
+		return laddOrIncr( key, 0, null , sess_id);
 	}
 
 	/** 
@@ -1009,8 +1527,8 @@ public class MemcachedClient {
 	 * @param inc value to set or increment by
 	 * @return value of incrementer
 	 */
-	public long addOrIncr( String key, long inc ) {
-		return addOrIncr( key, inc, null );
+	public long laddOrIncr( String key, long inc , String sess_id) {
+		return laddOrIncr( key, inc, null , sess_id);
 	}
 
 	/** 
@@ -1071,6 +1589,87 @@ public class MemcachedClient {
 			return incrdecr( "decr", key, inc, hashCode );
 		}
 	}
+
+	/**
+	 * Thread safe way to initialize and increment a counter.
+	 *
+	 * @param key key where the data is stored
+	 * @return value of incrementer
+	 */
+	public long addOrIncr( String key ) {
+		return addOrIncr( key, 0, null );
+	}
+
+	/**
+	 * Thread safe way to initialize and increment a counter.
+	 *
+	 * @param key key where the data is stored
+	 * @param inc value to set or increment by
+	 * @return value of incrementer
+	 */
+	public long addOrIncr( String key, long inc ) {
+		return addOrIncr( key, inc, null );
+	}
+
+	/**
+	 * Thread safe way to initialize and increment a counter.
+	 *
+	 * @param key key where the data is stored
+	 * @param inc value to set or increment by
+	 * @param hashCode if not null, then the int hashcode to use
+	 * @return value of incrementer
+	 */
+	public long laddOrIncr( String key, long inc, Integer hashCode, String sess_id ) {
+		boolean ret = lset( "ladd", key, new Long( inc ), null, hashCode, true, sess_id );
+
+		if ( ret ) {
+			return inc;
+		}
+		else {
+			return lincrdecr( "lincr", key, inc, hashCode, sess_id );
+		}
+	}
+
+	/**
+	 * Thread safe way to initialize and decrement a counter.
+	 *
+	 * @param key key where the data is stored
+	 * @return value of incrementer
+	 */
+	public long laddOrDecr( String key, String sess_id ) {
+		return laddOrDecr( key, 0, null, sess_id );
+	}
+
+	/**
+	 * Thread safe way to initialize and decrement a counter.
+	 *
+	 * @param key key where the data is stored
+	 * @param inc value to set or increment by
+	 * @return value of incrementer
+	 */
+	public long laddOrDecr( String key, long inc,String sess_id ) {
+		return laddOrDecr( key, inc, null,sess_id  );
+	}
+
+	/**
+	 * Thread safe way to initialize and decrement a counter.
+	 *
+	 * @param key key where the data is stored
+	 * @param inc value to set or increment by
+	 * @param hashCode if not null, then the int hashcode to use
+	 * @return value of incrementer
+	 */
+	public long laddOrDecr( String key, long inc, Integer hashCode, String sess_id ) {
+		boolean ret = lset( "ladd", key, new Long( inc ), null, hashCode, true, sess_id );
+
+		if ( ret ) {
+			return inc;
+		}
+		else {
+			return lincrdecr( "ldecr", key, inc, hashCode, sess_id);
+		}
+	}
+
 
 	/**
 	 * Increment the value at the specified key by 1, and then return it.
@@ -1238,6 +1837,119 @@ public class MemcachedClient {
 			sock = null;
 		}
 		
+		if ( sock != null ) {
+			sock.close();
+			sock = null;
+		}
+
+		return -1;
+	}
+
+	/**
+	 * Increments/decrements the value at the specified key by inc.
+	 *
+	 *  Note that the server uses a 32-bit unsigned integer, and checks for<br/>
+	 *  underflow. In the event of underflow, the result will be zero.  Because<br/>
+	 *  Java lacks unsigned types, the value is returned as a 64-bit integer.<br/>
+	 *  The server will only decrement a value if it already exists;<br/>
+	 *  if a value is not found, -1 will be returned.
+	 *
+	 * @param cmdname increment/decrement
+	 * @param key cache key
+	 * @param inc amount to incr or decr
+	 * @param hashCode if not null, then the int hashcode to use
+	 * @return new value or -1 if not exist
+	 */
+	private long lincrdecr( String cmdname, String key, long inc, Integer hashCode, String sess_id ) {
+
+		if ( key == null ) {
+			log.error( "null key for incrdecr()" );
+			return -1;
+		}
+
+		try {
+			key = sanitizeKey( key );
+		}
+		catch ( UnsupportedEncodingException e ) {
+
+			// if we have an errorHandler, use its hook
+			if ( errorHandler != null )
+				errorHandler.handleErrorOnGet( this, e, key );
+
+			log.error( "failed to sanitize your key!", e );
+			return -1;
+		}
+
+		// get SockIO obj for given cache key
+		SockIOPool.SockIO sock = pool.getSock( key, hashCode );
+
+		if ( sock == null ) {
+			if ( errorHandler != null )
+				errorHandler.handleErrorOnSet( this, new IOException( "no socket to server available" ), key );
+			return -1;
+		}
+
+		try {
+			String cmd = String.format( "%s %s %s %d\r\n", cmdname, sess_id, key, inc );
+			if ( log.isDebugEnabled() )
+				log.debug( "++++ memcache incr/decr command: " + cmd );
+
+			sock.write( cmd.getBytes() );
+			sock.flush();
+
+			// get result back
+			String line = sock.readLine();
+
+			if ( line.matches( "\\d+" ) ) {
+
+				// return sock to pool and return result
+				sock.close();
+				try {
+					return Long.parseLong( line );
+				}
+				catch ( Exception ex ) {
+
+					// if we have an errorHandler, use its hook
+					if ( errorHandler != null )
+						errorHandler.handleErrorOnGet( this, ex, key );
+
+					log.error( String.format( "Failed to parse Long value for key: %s", key ) );
+				}
+			}
+			else if ( NOTFOUND.equals( line ) ) {
+				if ( log.isInfoEnabled() )
+					log.info( "++++ key not found to incr/decr for key: " + key );
+			}
+			else if (ABORT.equals( line ) ) {
+				if ( log.isInfoEnabled() )
+					log.info( "++++ could not get lease to incr/decr for key: " + key );
+				throw new IncompatibleLeaseException( "++++ could not get lease to incr/decr for key: " + key);
+			}
+			else {
+				log.error( "++++ error incr/decr key: " + key );
+				log.error( "++++ server response: " + line );
+			}
+		}
+		catch ( IOException e ) {
+
+			// if we have an errorHandler, use its hook
+			if ( errorHandler != null )
+				errorHandler.handleErrorOnGet( this, e, key );
+
+			// exception thrown
+			log.error( "++++ exception thrown while writing bytes to server on incr/decr" );
+			log.error( e.getMessage(), e );
+
+			try {
+				sock.trueClose();
+			}
+			catch ( IOException ioe ) {
+				log.error( "++++ failed to close socket : " + sock.toString() );
+			}
+
+			sock = null;
+		}
+
 		if ( sock != null ) {
 			sock.close();
 			sock = null;
@@ -1483,7 +2195,7 @@ public class MemcachedClient {
 		}
 
 		try {
-			String cmd = "lget " + key + " "+sess_id+"\r\n";
+			String cmd = "lget " + sess_id+" "+key +"\r\n";
 
 			if ( log.isDebugEnabled() )
 				log.debug("++++ memcache get command: " + cmd);
@@ -1726,6 +2438,89 @@ public class MemcachedClient {
 	public Map<String,Object> getMulti( String[] keys, Integer[] hashCodes ) {
 		return getMulti( keys, hashCodes, false );
 	}
+	/**
+	 * Retrieve multiple objects from the memcache.
+	 *
+	 *  This is recommended over repeated calls to {@link #get(String) get()}, since it<br/>
+	 *  is more efficient.<br/>
+	 *
+	 * @param keys String array of keys to retrieve
+	 * @return Object array ordered in same order as key array containing results
+	 */
+	public Object[] lgetMultiArray( String[] keys,String sess_id ) {
+		return lgetMultiArray( keys, null, false, sess_id );
+	}
+
+	/**
+	 * Retrieve multiple objects from the memcache.
+	 *
+	 *  This is recommended over repeated calls to {@link #get(String) get()}, since it<br/>
+	 *  is more efficient.<br/>
+	 *
+	 * @param keys String array of keys to retrieve
+	 * @param hashCodes if not null, then the Integer array of hashCodes
+	 * @return Object array ordered in same order as key array containing results
+	 */
+	public Object[] lgetMultiArray( String[] keys, Integer[] hashCodes, String sess_id) {
+		return lgetMultiArray( keys, hashCodes, false, sess_id);
+	}
+
+	/**
+	 * Retrieve multiple objects from the memcache.
+	 *
+	 *  This is recommended over repeated calls to {@link #get(String) get()}, since it<br/>
+	 *  is more efficient.<br/>
+	 *
+	 * @param keys String array of keys to retrieve
+	 * @param hashCodes if not null, then the Integer array of hashCodes
+	 * @param asString if true, retrieve string vals
+	 * @return Object array ordered in same order as key array containing results
+	 */
+	public Object[] lgetMultiArray( String[] keys, Integer[] hashCodes, boolean asString,String sess_id ) {
+
+		Map<String,Object> data = lgetMulti( keys, hashCodes, asString,sess_id );
+
+		if ( data == null )
+			return null;
+
+		Object[] res = new Object[ keys.length ];
+		for ( int i = 0; i < keys.length; i++ ) {
+			res[i] = data.get( keys[i] );
+		}
+
+		return res;
+	}
+
+	/**
+	 * Retrieve multiple objects from the memcache.
+	 *
+	 *  This is recommended over repeated calls to {@link #get(String) get()}, since it<br/>
+	 *  is more efficient.<br/>
+	 *
+	 * @param keys String array of keys to retrieve
+	 * @return a hashmap with entries for each key is found by the server,
+	 *      keys that are not found are not entered into the hashmap, but attempting to
+	 *      retrieve them from the hashmap gives you null.
+	 */
+	public Map<String,Object> lgetMulti( String[] keys, String sess_id) {
+		return lgetMulti( keys, null, false, sess_id );
+	}
+
+	/**
+	 * Retrieve multiple keys from the memcache.
+	 *
+	 *  This is recommended over repeated calls to {@link #get(String) get()}, since it<br/>
+	 *  is more efficient.<br/>
+	 *
+	 * @param keys keys to retrieve
+	 * @param hashCodes if not null, then the Integer array of hashCodes
+	 * @return a hashmap with entries for each key is found by the server,
+	 *      keys that are not found are not entered into the hashmap, but attempting to
+	 *      retrieve them from the hashmap gives you null.
+	 */
+	public Map<String,Object> lgetMulti( String[] keys, Integer[] hashCodes,String sess_id ) {
+		return lgetMulti( keys, hashCodes, false, sess_id );
+	}
 
 	/**
 	 * Retrieve multiple keys from the memcache.
@@ -1801,6 +2596,116 @@ public class MemcachedClient {
 		// now query memcache
 		Map<String,Object> ret =
 			new HashMap<String,Object>( keys.length );
+
+		// now use new NIO implementation
+		(new NIOLoader( this )).doMulti( asString, cmdMap, keys, ret );
+
+		// fix the return array in case we had to rewrite any of the keys
+		for ( String key : keys ) {
+
+			String cleanKey = key;
+			try {
+				cleanKey = sanitizeKey( key );
+			}
+			catch ( UnsupportedEncodingException e ) {
+
+				// if we have an errorHandler, use its hook
+				if ( errorHandler != null )
+					errorHandler.handleErrorOnGet( this, e, key );
+
+				log.error( "failed to sanitize your key!", e );
+				continue;
+			}
+
+			if ( ! key.equals( cleanKey ) && ret.containsKey( cleanKey ) ) {
+				ret.put( key, ret.get( cleanKey ) );
+				ret.remove( cleanKey );
+			}
+
+			// backfill missing keys w/ null value
+			if ( ! ret.containsKey( key ) )
+				ret.put( key, null );
+		}
+
+		if ( log.isDebugEnabled() )
+			log.debug( "++++ memcache: got back " + ret.size() + " results" );
+		return ret;
+	}
+
+	/**
+	 * Retrieve multiple keys from the memcache.
+	 *
+	 *  This is recommended over repeated calls to {@link #get(String) get()}, since it<br/>
+	 *  is more efficient.<br/>
+	 *
+	 * @param keys keys to retrieve
+	 * @param hashCodes if not null, then the Integer array of hashCodes
+	 * @param asString if true then retrieve using String val
+	 * @return a hashmap with entries for each key is found by the server,
+	 *      keys that are not found are not entered into the hashmap, but attempting to
+	 *      retrieve them from the hashmap gives you null.
+	 */
+	public Map<String,Object> lgetMulti( String[] keys, Integer[] hashCodes, boolean asString, String sess_id) {
+
+		if ( keys == null || keys.length == 0 ) {
+			log.error( "missing keys for getMulti()" );
+			return null;
+		}
+
+		Map<String,StringBuilder> cmdMap =
+				new HashMap<String,StringBuilder>();
+
+		for ( int i = 0; i < keys.length; ++i ) {
+
+			String key = keys[i];
+			if ( key == null ) {
+				log.error( "null key, so skipping" );
+				continue;
+			}
+
+			Integer hash = null;
+			if ( hashCodes != null && hashCodes.length > i )
+				hash = hashCodes[ i ];
+
+			String cleanKey = key;
+			try {
+				cleanKey = sanitizeKey( key );
+			}
+			catch ( UnsupportedEncodingException e ) {
+
+				// if we have an errorHandler, use its hook
+				if ( errorHandler != null )
+					errorHandler.handleErrorOnGet( this, e, key );
+
+				log.error( "failed to sanitize your key!", e );
+				continue;
+			}
+
+			// get SockIO obj from cache key
+			SockIOPool.SockIO sock = pool.getSock( cleanKey, hash );
+
+			if ( sock == null ) {
+				if ( errorHandler != null )
+					errorHandler.handleErrorOnGet( this, new IOException( "no socket to server available" ), key );
+				continue;
+			}
+
+			// store in map and list if not already
+			if ( !cmdMap.containsKey( sock.getHost() ) )
+				cmdMap.put( sock.getHost(), new StringBuilder( "lget" ) );
+
+			cmdMap.get( sock.getHost() ).append( " " + cleanKey );
+
+			// return to pool
+			sock.close();
+		}
+
+		if ( log.isInfoEnabled() )
+			log.info( "multi get socket count : " + cmdMap.size() );
+
+		// now query memcache
+		Map<String,Object> ret =
+				new HashMap<String,Object>( keys.length );
 
 		// now use new NIO implementation
 		(new NIOLoader( this )).doMulti( asString, cmdMap, keys, ret );
