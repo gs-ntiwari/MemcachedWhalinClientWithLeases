@@ -2204,7 +2204,7 @@ public class MemcachedClient {
 			Object o = null;
 			int back_off=0;
 
-			while ( true) {
+			while (true) {
                 sock.write(cmd.getBytes());
                 sock.flush();
                 String line = sock.readLine();

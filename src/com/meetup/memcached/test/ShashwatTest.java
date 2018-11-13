@@ -3,6 +3,11 @@ package com.meetup.memcached.test;
 import com.meetup.memcached.MemcachedClient;
 import com.meetup.memcached.SockIOPool;
 
+import java.text.SimpleDateFormat;
+import java.util.Date;
+
+import static com.meetup.memcached.test.UnitTests.mc;
+
 public class ShashwatTest {
 
     public static void println(Object args) {
@@ -30,18 +35,21 @@ public class ShashwatTest {
         long start = System.currentTimeMillis();
         long start_nano = System.nanoTime();
 
-//        println(mc.get("hello"));
-        mc.set("hello", "world");
-        println(mc.get("hello"));
-//        mc.set("hello", "world");
-//        println(mc.get("hello"));
-//        mc.set("hello", "world");
-//        println(mc.get("hello"));
-//        mc.set("hello", "world");
-//        println(mc.get("hello"));
+        tryMethod(mc);
 
         long time_nano = System.nanoTime() - start_nano;
         long time = System.currentTimeMillis() - start;
         println("Result in " + (time) + " ms " + (time_nano) + " ns");
+    }
+
+    private static void tryMethod(MemcachedClient mc) {
+        SimpleDateFormat sd = new SimpleDateFormat();
+        Date currentDate=sd.getCalendar().getTime();
+        currentDate.setTime(currentDate.getTime()+1000);
+        //String.format( "%s %s %s %d %d %d\r\n","lset", "1", "k1", 0|2, (currentDate.getTime()/ 1000), 10 );
+        String sessionID = mc.beginSession();
+        mc.lset("key2", "value1", currentDate, sessionID);
+        mc.lget("key3", null, true, sessionID);
+        mc.endSession(sessionID);
     }
 }
