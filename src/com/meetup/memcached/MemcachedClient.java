@@ -2203,10 +2203,13 @@ public class MemcachedClient {
 			// ready object
 			Object o = null;
 			int back_off=0;
-
+			boolean isBackOff=false;
 			while (true) {
-                sock.write(cmd.getBytes());
-                sock.flush();
+				if(isBackOff)
+				{
+					sock.write(cmd.getBytes());
+					sock.flush();
+				}
                 String line = sock.readLine();
 
                 if (log.isDebugEnabled())
@@ -2216,6 +2219,7 @@ public class MemcachedClient {
                     String[] info = line.split(" ");
                     int flag = Integer.parseInt(info[2]);
                     int length = Integer.parseInt(info[3]);
+                    isBackOff=false;
 
                     if (log.isDebugEnabled()) {
                         log.debug("++++ key: " + key);
@@ -2310,6 +2314,7 @@ public class MemcachedClient {
 						throw new IncompatibleLeaseException("++++ lget session aborted." );
 					}
                     else {
+                    	isBackOff=true;
 						continue;
 					}
                 } else if (line.startsWith(ABORT)) {
