@@ -306,6 +306,7 @@ public class MemcachedClient {
 		populateSessionIds(clientId);
 	}
 
+
 	private void populateSessionIds(String clientId) {
 		Map<String, Boolean> sessionMap=Coordinator.getSessions(clientId);
 		if(sessions==null)
@@ -1677,13 +1678,79 @@ public class MemcachedClient {
 	 * @param key key where the data is stored
 	 * @return -1, if the key is not found, the value after incrementing otherwise
 	 */
-	public long incr( String key ) {
-		return incrdecr( "incr", key, 1, null );
+	public long lincr( String key , String sess_id) {
+		return lincrdecr( "lincr", key, 1, null, sess_id );
 	}
 
 	/** 
 	 * Increment the value at the specified key by passed in val. 
 	 * 
+	 * @param key key where the data is stored
+	 * @param inc how much to increment by
+	 * @return -1, if the key is not found, the value after incrementing otherwise
+	 */
+	public long incr( String key, long inc, String sess_id ) {
+		return lincrdecr( "lincr", key, inc, null , sess_id);
+	}
+
+	/**
+	 * Increment the value at the specified key by the specified increment, and then return it.
+	 *
+	 * @param key key where the data is stored
+	 * @param inc how much to increment by
+	 * @param hashCode if not null, then the int hashcode to use
+	 * @return -1, if the key is not found, the value after incrementing otherwise
+	 */
+	public long lincr( String key, long inc, Integer hashCode, String sess_id ) {
+		return lincrdecr( "lincr", key, inc, hashCode, sess_id );
+	}
+	
+	/**
+	 * Decrement the value at the specified key by 1, and then return it.
+	 *
+	 * @param key key where the data is stored
+	 * @return -1, if the key is not found, the value after incrementing otherwise
+	 */
+	public long ldecr( String key, String sess_id) {
+		return lincrdecr( "ldecr", key, 1, null, sess_id );
+	}
+
+	/**
+	 * Decrement the value at the specified key by passed in value, and then return it.
+	 *
+	 * @param key key where the data is stored
+	 * @param inc how much to increment by
+	 * @return -1, if the key is not found, the value after incrementing otherwise
+	 */
+	public long ldecr( String key, long inc, String sess_id) {
+		return lincrdecr( "ldecr", key, inc, null, sess_id );
+	}
+
+	/**
+	 * Decrement the value at the specified key by the specified increment, and then return it.
+	 *
+	 * @param key key where the data is stored
+	 * @param inc how much to increment by
+	 * @param hashCode if not null, then the int hashcode to use
+	 * @return -1, if the key is not found, the value after incrementing otherwise
+	 */
+	public long ldecr( String key, long inc, Integer hashCode, String sess_id ) {
+		return lincrdecr( "ldecr", key, inc, hashCode, sess_id );
+	}
+
+	/**
+	 * Increment the value at the specified key by 1, and then return it.
+	 *
+	 * @param key key where the data is stored
+	 * @return -1, if the key is not found, the value after incrementing otherwise
+	 */
+	public long incr( String key ) {
+		return incrdecr( "incr", key, 1, null );
+	}
+
+	/**
+	 * Increment the value at the specified key by passed in val.
+	 *
 	 * @param key key where the data is stored
 	 * @param inc how much to increment by
 	 * @return -1, if the key is not found, the value after incrementing otherwise
@@ -1703,7 +1770,7 @@ public class MemcachedClient {
 	public long incr( String key, long inc, Integer hashCode ) {
 		return incrdecr( "incr", key, inc, hashCode );
 	}
-	
+
 	/**
 	 * Decrement the value at the specified key by 1, and then return it.
 	 *
@@ -1970,8 +2037,24 @@ public class MemcachedClient {
 	 * @param key key where data is stored
 	 * @return the object that was previously stored, or null if it was not previously stored
 	 */
-	public Object get( String key ) {
-		return get( key, null, false );
+	public Object lget( String key, String sess_id ) {
+		return lget( key, null, false, sess_id, false);
+	}
+
+	/**
+	 * Retrieve a key from the server, using a specific hash.
+	 *
+	 *  If the data was compressed or serialized when compressed, it will automatically<br/>
+	 *  be decompressed or serialized, as appropriate. (Inclusive or)<br/>
+	 *<br/>
+	 *  Non-serialized data will be returned as a string, so explicit conversion to<br/>
+	 *  numeric types will be necessary, if desired<br/>
+	 *
+	 * @param key key where data is stored
+	 * @return the object that was previously stored, or null if it was not previously stored
+	 */
+	public Object lget( String key, String sess_id, boolean readOnly ) {
+		return lget( key, null, false, sess_id, readOnly);
 	}
 
 	/** 
@@ -1987,9 +2070,44 @@ public class MemcachedClient {
 	 * @param hashCode if not null, then the int hashcode to use
 	 * @return the object that was previously stored, or null if it was not previously stored
 	 */
+	public Object lget( String key, Integer hashCode, String sess_id ) {
+		return lget( key, hashCode, false, sess_id, false );
+	}
+
+	/**
+	 * Retrieve a key from the server, using a specific hash.
+	 *
+	 *  If the data was compressed or serialized when compressed, it will automatically<br/>
+	 *  be decompressed or serialized, as appropriate. (Inclusive or)<br/>
+	 *<br/>
+	 *  Non-serialized data will be returned as a string, so explicit conversion to<br/>
+	 *  numeric types will be necessary, if desired<br/>
+	 *
+	 * @param key key where data is stored
+	 * @return the object that was previously stored, or null if it was not previously stored
+	 */
+	public Object get( String key) {
+		return get( key, null, false);
+	}
+
+	/**
+	 * Retrieve a key from the server, using a specific hash.
+	 *
+	 *  If the data was compressed or serialized when compressed, it will automatically<br/>
+	 *  be decompressed or serialized, as appropriate. (Inclusive or)<br/>
+	 *<br/>
+	 *  Non-serialized data will be returned as a string, so explicit conversion to<br/>
+	 *  numeric types will be necessary, if desired<br/>
+	 *
+	 * @param key key where data is stored
+	 * @param hashCode if not null, then the int hashcode to use
+	 * @return the object that was previously stored, or null if it was not previously stored
+	 */
 	public Object get( String key, Integer hashCode ) {
 		return get( key, hashCode, false );
 	}
+
+
 
 	/**
 	 * Retrieve a key from the server, using a specific hash.
@@ -2165,7 +2283,7 @@ public class MemcachedClient {
 		return null;
 	}
 
-	public Object lget( String key, Integer hashCode, boolean asString, String sess_id ) {
+	public Object lget( String key, Integer hashCode, boolean asString, String sess_id, boolean readOnly) throws IncompatibleLeaseException{
 
 		if ( key == null ) {
 			log.error( "key is null for get()" );
@@ -2195,8 +2313,11 @@ public class MemcachedClient {
 		}
 
 		try {
-			String cmd = "lget " + sess_id+" "+key +"\r\n";
-
+			String cmd = "lget " + sess_id + " " + key;
+			if(!readOnly) {
+				cmd+=" X";
+			}
+			cmd=cmd+"\r\n";
 			if ( log.isDebugEnabled() )
 				log.debug("++++ memcache get command: " + cmd);
 
@@ -2883,6 +3004,229 @@ public class MemcachedClient {
 		}
 	}
 
+	public boolean lvalidate(String sid) throws IncompatibleLeaseException {
+		if (sid == null || sid.equals("")) {
+			log.error("null value fr sid passed to validate");
+			return false;
+		}
+
+		try {
+			sid = sanitizeKey( sid );
+		}
+		catch ( UnsupportedEncodingException e ) {
+
+			// if we have an errorHandler, use its hook
+			if ( errorHandler != null )
+				errorHandler.handleErrorOnDelete( this, e, sid );
+
+			log.error( "failed to sanitize your key!", e );
+			return false;
+		}
+
+		// get SockIO obj from hash or from key
+		SockIOPool.SockIO sock = pool.getSock(sid, null);
+
+		String command = "lvalidate " + sid + "\r\n";
+
+		try {
+			sock.write(command.getBytes());
+			sock.flush();
+
+			String line = sock.readLine();
+			if ( OK.equals( line ) ) {
+				if ( log.isInfoEnabled() )
+					log.info( "++++ validate of session id: " + sid + " from cache was a success" );
+
+				// return sock to pool and bail here
+				sock.close();
+				sock = null;
+				return true;
+			} else if (ABORT.equals( line )) {
+				if ( log.isInfoEnabled() )
+					log.info( "++++ validate of session id: " + sid + " from cache was a abort" );
+
+				// return sock to pool and bail here
+				sock.close();
+				sock = null;
+				throw new IncompatibleLeaseException("validate Session aborted.");
+			} else {
+				log.error( "++++ error validate sess: " + sid );
+				log.error( "++++ server response: " + line );
+
+				sock.close();
+				sock = null;
+				return false;
+			}
+		} catch ( IOException e ) {
+
+			// if we have an errorHandler, use its hook
+			if ( errorHandler != null )
+				errorHandler.handleErrorOnDelete( this, e, sid );
+
+			// exception thrown
+			log.error( "++++ exception thrown while writing bytes to server on delete" );
+			log.error( e.getMessage(), e );
+
+			try {
+				sock.trueClose();
+			}
+			catch ( IOException ioe ) {
+				log.error( "++++ failed to close socket : " + sock.toString() );
+			}
+
+		}
+
+		return false;
+	}
+
+	public boolean lcommit(String sid){
+		if ( sid == null ) {
+			log.error( "null value for sid passed to dCommit" );
+			return false;
+		}
+
+		try {
+			sid = sanitizeKey( sid );
+		}
+		catch ( UnsupportedEncodingException e ) {
+
+			// if we have an errorHandler, use its hook
+			if ( errorHandler != null )
+				errorHandler.handleErrorOnDelete( this, e, sid );
+
+			log.error( "failed to sanitize your key!", e );
+			return false;
+		}
+
+		// get SockIO obj from hash or from key
+		SockIOPool.SockIO sock = pool.getSock(sid, null);
+
+		// build command
+		StringBuilder command =
+				new StringBuilder( "lcommit " ).append( sid );
+
+		command.append( "\r\n" );
+
+		try {
+			sock.write( command.toString().getBytes() );
+			sock.flush();
+
+			// if we get appropriate response back, then we return true
+			String line = sock.readLine();
+			if ( OK.equals( line ) ) {
+				if ( log.isInfoEnabled() )
+					log.info( "++++ lCommit of session id: " + sid + " from cache was a success" );
+
+				// return sock to pool and bail here
+				sock.close();
+				sock = null;
+				return true;
+			} else if (ABORT.equals( line )) {
+				if ( log.isInfoEnabled() )
+					log.info( "++++ lCommit of session id: " + sid + " from cache was a abort" );
+
+				// return sock to pool and bail here
+				sock.close();
+				sock = null;
+
+				throw new IncompatibleLeaseException("lCommit session aborted.");
+			} else {
+				log.error( "++++ error lCommit sess: " + sid );
+				log.error( "++++ server response: " + line );
+
+				sock.close();
+				sock = null;
+				return false;
+			}
+		}
+		catch ( IOException e ) {
+
+			// if we have an errorHandler, use its hook
+			if ( errorHandler != null )
+				errorHandler.handleErrorOnDelete( this, e, sid );
+
+			// exception thrown
+			log.error( "++++ exception thrown while writing bytes to server on delete" );
+			log.error( e.getMessage(), e );
+
+			try {
+				sock.trueClose();
+			}
+			catch ( IOException ioe ) {
+				log.error( "++++ failed to close socket : " + sock.toString() );
+			}
+		}
+
+		return false;
+	}
+
+	public void labort(String sid){
+		if ( sid == null ) {
+			log.error( "null value for sid passed to dCommit" );
+			return;
+		}
+
+		try {
+			sid = sanitizeKey( sid );
+		}
+		catch ( UnsupportedEncodingException e ) {
+
+			// if we have an errorHandler, use its hook
+			if ( errorHandler != null )
+				errorHandler.handleErrorOnDelete( this, e, sid );
+
+			log.error( "failed to sanitize your key!", e );
+		}
+
+		// get SockIO obj from hash or from key
+		SockIOPool.SockIO sock = pool.getSock(sid, null);
+
+		// build command
+		StringBuilder command =
+				new StringBuilder( "labort " ).append( sid );
+
+		command.append( "\r\n" );
+
+		try {
+			sock.write( command.toString().getBytes() );
+			sock.flush();
+
+			// if we get appropriate response back, then we return true
+			String line = sock.readLine();
+			if ( OK.equals( line ) ) {
+				if ( log.isInfoEnabled() )
+					log.info( "++++ labort of session id: " + sid + " from cache was a success" );
+
+				// return sock to pool and bail here
+				sock.close();
+				sock = null;
+			}  else {
+				log.error( "++++ error labort sess: " + sid );
+				log.error( "++++ server response: " + line );
+
+				sock.close();
+				sock = null;
+			}
+		}
+		catch ( IOException e ) {
+
+			// if we have an errorHandler, use its hook
+			if ( errorHandler != null )
+				errorHandler.handleErrorOnDelete( this, e, sid );
+
+			// exception thrown
+			log.error( "++++ exception thrown while writing bytes to server on delete" );
+			log.error( e.getMessage(), e );
+
+			try {
+				sock.trueClose();
+			}
+			catch ( IOException ioe ) {
+				log.error( "++++ failed to close socket : " + sock.toString() );
+			}
+		}
+	}
+
 	private String sanitizeKey( String key ) throws UnsupportedEncodingException {
 		return ( sanitizeKeys ) ? URLEncoder.encode( key, "UTF-8" ) : key;
 	}
@@ -3195,6 +3539,8 @@ public class MemcachedClient {
 		return statsMaps;
 	}
 
+
+
 	protected final class NIOLoader {
 		protected Selector selector;
 		protected int numConns = 0;
@@ -3387,163 +3733,6 @@ public class MemcachedClient {
 			}
 		}
 
-		public boolean lvalidate(String sid) throws IncompatibleLeaseException {
-			if (sid == null || sid.equals("")) {
-				log.error("null value fr sid passed to validate");
-				return false;
-			}
-
-			try {
-				sid = sanitizeKey( sid );
-			}
-			catch ( UnsupportedEncodingException e ) {
-
-				// if we have an errorHandler, use its hook
-				if ( errorHandler != null )
-					errorHandler.handleErrorOnDelete( this.mc, e, sid );
-
-				log.error( "failed to sanitize your key!", e );
-				return false;
-			}
-
-			// get SockIO obj from hash or from key
-			SockIOPool.SockIO sock = pool.getSock(sid, null);
-
-			String command = "lvalidate " + sid + "\r\n";
-
-			try {
-				sock.write(command.getBytes());
-				sock.flush();
-
-				String line = sock.readLine();
-				if ( OK.equals( line ) ) {
-					if ( log.isInfoEnabled() )
-						log.info( "++++ validate of session id: " + sid + " from cache was a success" );
-
-					// return sock to pool and bail here
-					sock.close();
-					sock = null;
-					return true;
-				} else if (ABORT.equals( line )) {
-					if ( log.isInfoEnabled() )
-						log.info( "++++ validate of session id: " + sid + " from cache was a abort" );
-
-					// return sock to pool and bail here
-					sock.close();
-					sock = null;
-					throw new IncompatibleLeaseException("validate Session aborted.");
-				} else {
-					log.error( "++++ error validate sess: " + sid );
-					log.error( "++++ server response: " + line );
-
-					sock.close();
-					sock = null;
-					return false;
-				}
-			} catch ( IOException e ) {
-
-				// if we have an errorHandler, use its hook
-				if ( errorHandler != null )
-					errorHandler.handleErrorOnDelete( this.mc, e, sid );
-
-				// exception thrown
-				log.error( "++++ exception thrown while writing bytes to server on delete" );
-				log.error( e.getMessage(), e );
-
-				try {
-					sock.trueClose();
-				}
-				catch ( IOException ioe ) {
-					log.error( "++++ failed to close socket : " + sock.toString() );
-				}
-
-				sock = null;
-			}
-
-			return false;
-		}
-
-		public boolean lCommit(String sid) throws IncompatibleLeaseException{
-			if ( sid == null ) {
-				log.error( "null value for sid passed to dCommit" );
-				return false;
-			}
-
-			try {
-				sid = sanitizeKey( sid );
-			}
-			catch ( UnsupportedEncodingException e ) {
-
-				// if we have an errorHandler, use its hook
-				if ( errorHandler != null )
-					errorHandler.handleErrorOnDelete( this.mc, e, sid );
-
-				log.error( "failed to sanitize your key!", e );
-				return false;
-			}
-
-			// get SockIO obj from hash or from key
-			SockIOPool.SockIO sock = pool.getSock(sid, null);
-
-			// build command
-			StringBuilder command =
-					new StringBuilder( "lcommit " ).append( sid );
-
-			command.append( "\r\n" );
-
-			try {
-				sock.write( command.toString().getBytes() );
-				sock.flush();
-
-				// if we get appropriate response back, then we return true
-				String line = sock.readLine();
-				if ( OK.equals( line ) ) {
-					if ( log.isInfoEnabled() )
-						log.info( "++++ lCommit of session id: " + sid + " from cache was a success" );
-
-					// return sock to pool and bail here
-					sock.close();
-					sock = null;
-					return true;
-				} else if (ABORT.equals( line )) {
-					if ( log.isInfoEnabled() )
-						log.info( "++++ lCommit of session id: " + sid + " from cache was a abort" );
-
-					// return sock to pool and bail here
-					sock.close();
-					sock = null;
-
-					throw new IncompatibleLeaseException("lCommit session aborted.");
-				} else {
-					log.error( "++++ error dCommit sess: " + sid );
-					log.error( "++++ server response: " + line );
-
-					sock.close();
-					sock = null;
-					return false;
-				}
-			}
-			catch ( IOException e ) {
-
-				// if we have an errorHandler, use its hook
-				if ( errorHandler != null )
-					errorHandler.handleErrorOnDelete( this.mc, e, sid );
-
-				// exception thrown
-				log.error( "++++ exception thrown while writing bytes to server on delete" );
-				log.error( e.getMessage(), e );
-
-				try {
-					sock.trueClose();
-				}
-				catch ( IOException ioe ) {
-					log.error( "++++ failed to close socket : " + sock.toString() );
-				}
-			}
-
-			return false;
-		}
-		
 		private void handleError( Throwable e, String[] keys ) {
 		    // if we have an errorHandler, use its hook
 		    if ( errorHandler != null )

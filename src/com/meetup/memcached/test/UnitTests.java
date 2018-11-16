@@ -33,6 +33,10 @@ public class UnitTests {
 		Logger.getLogger( UnitTests.class.getName() );
 
     public static MemcachedClient mc  = null;
+	public static MemcachedClient mc2  = null;
+	public static MemcachedClient mc3  = null;
+	public static MemcachedClient mc4  = null;
+
 
     public static void test1() {
         mc.set( "foo", Boolean.TRUE );
@@ -316,6 +320,23 @@ public class UnitTests {
 
 	}
 
+	private static void testBlockWrite() throws Exception {
+		mc.delete("key1");
+		mc.delete("key2");
+		mc.lset("lappend","key1", 2, "s1");
+		mc.lcommit("s1");
+		mc3.lget("key1", "s3", false);
+		mc2.lset("append","key1", 6, "s2");
+		HashMap<String, Integer> keyMap = new HashMap<String, Integer>();
+		keyMap.put("key1", 1);
+		mc.endSession("s1");
+		mc3.lget("key1", "s3");
+		mc3.lset("key1", "val3", "s3");
+		assert mc2.lcommit("s2") == false;
+		assert mc.lget("key1", "s1").equals("val3");
+	}
+
+
 	/**
 	 * This runs through some simple tests of the MemcacheClient.
 	 *
@@ -364,6 +385,9 @@ public class UnitTests {
 		pool.initialize();
 
         mc = new MemcachedClient( "test" );
+		mc2 = new MemcachedClient("test");
+		mc3 = new MemcachedClient("test");
+		mc4 = new MemcachedClient("test");
 		runAlTests( mc );
 	}
 
