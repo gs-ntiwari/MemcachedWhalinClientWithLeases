@@ -2698,6 +2698,7 @@ public class MemcachedClient {
 			// store in map and list if not already
 			if ( !cmdMap.containsKey( sock.getHost() ) )
 				cmdMap.put( sock.getHost(), new StringBuilder( "lget" ) );
+			    cmdMap.put(sock.getHost(), new StringBuilder(" "+sess_id));
 
 			cmdMap.get( sock.getHost() ).append( " " + cleanKey );
 
@@ -3385,6 +3386,163 @@ public class MemcachedClient {
 				}
 			}
 		}
+
+		public boolean lvalidate(String sid) throws IncompatibleLeaseException {
+			if (sid == null || sid.equals("")) {
+				log.error("null value fr sid passed to validate");
+				return false;
+			}
+
+			try {
+				sid = sanitizeKey( sid );
+			}
+			catch ( UnsupportedEncodingException e ) {
+
+				// if we have an errorHandler, use its hook
+				if ( errorHandler != null )
+					errorHandler.handleErrorOnDelete( this.mc, e, sid );
+
+				log.error( "failed to sanitize your key!", e );
+				return false;
+			}
+
+			// get SockIO obj from hash or from key
+			SockIOPool.SockIO sock = pool.getSock(sid, null);
+
+			String command = "lvalidate " + sid + "\r\n";
+
+			try {
+				sock.write(command.getBytes());
+				sock.flush();
+
+				String line = sock.readLine();
+				if ( OK.equals( line ) ) {
+					if ( log.isInfoEnabled() )
+						log.info( "++++ validate of session id: " + sid + " from cache was a success" );
+
+					// return sock to pool and bail here
+					sock.close();
+					sock = null;
+					return true;
+				} else if (ABORT.equals( line )) {
+					if ( log.isInfoEnabled() )
+						log.info( "++++ validate of session id: " + sid + " from cache was a abort" );
+
+					// return sock to pool and bail here
+					sock.close();
+					sock = null;
+					throw new IncompatibleLeaseException("validate Session aborted.");
+				} else {
+					log.error( "++++ error validate sess: " + sid );
+					log.error( "++++ server response: " + line );
+
+					sock.close();
+					sock = null;
+					return false;
+				}
+			} catch ( IOException e ) {
+
+				// if we have an errorHandler, use its hook
+				if ( errorHandler != null )
+					errorHandler.handleErrorOnDelete( this.mc, e, sid );
+
+				// exception thrown
+				log.error( "++++ exception thrown while writing bytes to server on delete" );
+				log.error( e.getMessage(), e );
+
+				try {
+					sock.trueClose();
+				}
+				catch ( IOException ioe ) {
+					log.error( "++++ failed to close socket : " + sock.toString() );
+				}
+
+				sock = null;
+			}
+
+			return false;
+		}
+
+		public boolean lCommit(String sid) throws IncompatibleLeaseException{
+			if ( sid == null ) {
+				log.error( "null value for sid passed to dCommit" );
+				return false;
+			}
+
+			try {
+				sid = sanitizeKey( sid );
+			}
+			catch ( UnsupportedEncodingException e ) {
+
+				// if we have an errorHandler, use its hook
+				if ( errorHandler != null )
+					errorHandler.handleErrorOnDelete( this.mc, e, sid );
+
+				log.error( "failed to sanitize your key!", e );
+				return false;
+			}
+
+			// get SockIO obj from hash or from key
+			SockIOPool.SockIO sock = pool.getSock(sid, null);
+
+			// build command
+			StringBuilder command =
+					new StringBuilder( "lcommit " ).append( sid );
+
+			command.append( "\r\n" );
+
+			try {
+				sock.write( command.toString().getBytes() );
+				sock.flush();
+
+				// if we get appropriate response back, then we return true
+				String line = sock.readLine();
+				if ( OK.equals( line ) ) {
+					if ( log.isInfoEnabled() )
+						log.info( "++++ lCommit of session id: " + sid + " from cache was a success" );
+
+					// return sock to pool and bail here
+					sock.close();
+					sock = null;
+					return true;
+				} else if (ABORT.equals( line )) {
+					if ( log.isInfoEnabled() )
+						log.info( "++++ lCommit of session id: " + sid + " from cache was a abort" );
+
+					// return sock to pool and bail here
+					sock.close();
+					sock = null;
+
+					throw new IncompatibleLeaseException("lCommit session aborted.");
+				} else {
+					log.error( "++++ error dCommit sess: " + sid );
+					log.error( "++++ server response: " + line );
+
+					sock.close();
+					sock = null;
+					return false;
+				}
+			}
+			catch ( IOException e ) {
+
+				// if we have an errorHandler, use its hook
+				if ( errorHandler != null )
+					errorHandler.handleErrorOnDelete( this.mc, e, sid );
+
+				// exception thrown
+				log.error( "++++ exception thrown while writing bytes to server on delete" );
+				log.error( e.getMessage(), e );
+
+				try {
+					sock.trueClose();
+				}
+				catch ( IOException ioe ) {
+					log.error( "++++ failed to close socket : " + sock.toString() );
+				}
+			}
+
+			return false;
+		}
 		
 		private void handleError( Throwable e, String[] keys ) {
 		    // if we have an errorHandler, use its hook
@@ -3443,5 +3601,6 @@ public class MemcachedClient {
 				}
 			}
 		}
+
 	}
 }
