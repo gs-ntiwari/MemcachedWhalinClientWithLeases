@@ -2313,10 +2313,15 @@ public class MemcachedClient {
 		}
 
 		try {
-			String cmd = "lget " + sess_id + " " + key;
-			if(!readOnly) {
+			String cmd = "lget " + sess_id;
+			if(!readOnly){
 				cmd+=" X";
 			}
+			else
+			{
+				cmd+=" S";
+			}
+			cmd+=" " + key;
 			cmd=cmd+"\r\n";
 			if ( log.isDebugEnabled() )
 				log.debug("++++ memcache get command: " + cmd);
