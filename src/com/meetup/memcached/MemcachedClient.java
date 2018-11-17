@@ -164,9 +164,9 @@ public class MemcachedClient {
 	// return codes
 	private static final String VALUE        = "VALUE";			// start of value line from server
 	private static final String STATS        = "STAT";			// start of stats line from server
-    private static final String LEASE        = "LEASE";			// start of stats line from server
+    private static final String LEASE        = "SUCCESS_LEASE";			// start of stats line from server
     private static final String BACK_OFF     = "BACK_OFF";		// start of stats line from server
-    private static final int  MAX_BACK_OFF   = 20;		// start of stats line from server
+    private static final int  MAX_BACK_OFF   = 3;		// start of stats line from server
     private static final String ABORT        = "ABORT";			// start of stats line from server
 	private static final String ITEM         = "ITEM";			// start of item line from server
 	private static final String DELETED      = "DELETED";		// successful deletion
@@ -2330,13 +2330,17 @@ public class MemcachedClient {
 			Object o = null;
 			int back_off=0;
 			boolean isBackOff=false;
+			sock.write(cmd.getBytes());
+			sock.flush();
 			while (true) {
 				if(isBackOff)
 				{
+					sock = pool.getSock( key, hashCode );
 					sock.write(cmd.getBytes());
 					sock.flush();
 				}
                 String line = sock.readLine();
+
 
                 if (log.isDebugEnabled())
                     log.debug("++++ line: " + line);
@@ -2441,6 +2445,9 @@ public class MemcachedClient {
 					}
                     else {
                     	isBackOff=true;
+						sock.trueClose();
+						sock=null;
+						Thread.sleep(50);
 						continue;
 					}
                 } else if (line.startsWith(ABORT)) {
@@ -2478,6 +2485,8 @@ public class MemcachedClient {
 				log.error( "++++ failed to close socket : " + sock.toString() );
 			}
 			sock = null;
+		} catch (InterruptedException e) {
+			e.printStackTrace();
 		}
 
 		if ( sock != null )
