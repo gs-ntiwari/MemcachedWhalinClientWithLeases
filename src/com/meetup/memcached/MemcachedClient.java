@@ -174,6 +174,7 @@ public class MemcachedClient {
 	private static final String STORED       = "STORED";		// successful store of data
 	private static final String NOTSTORED    = "NOT_STORED";	// data not stored
 	private static final String OK           = "OK";			// success
+	private static final String SUCCESS      = "SUCCESS";			// success
 	private static final String END          = "END";			// end of data from server
 
 	private static final String ERROR        = "ERROR";			// invalid command name from client
@@ -2835,7 +2836,7 @@ public class MemcachedClient {
 				cmdMap.put( sock.getHost(), new StringBuilder( "lget" ) );
 			    cmdMap.put(sock.getHost(), new StringBuilder(" "+sess_id));
 
-			cmdMap.get( sock.getHost() ).append( " " + cleanKey );
+			    cmdMap.get( sock.getHost() ).append( " " + cleanKey );
 
 			// return to pool
 			sock.close();
@@ -3047,11 +3048,12 @@ public class MemcachedClient {
 			sock.flush();
 
 			String line = sock.readLine();
-			if ( OK.equals( line ) ) {
+			if ( SUCCESS.equals( line ) ) {
 				if ( log.isInfoEnabled() )
 					log.info( "++++ validate of session id: " + sid + " from cache was a success" );
 
 				// return sock to pool and bail here
+				sock.clearEOL();
 				sock.close();
 				sock = null;
 				return true;
@@ -3060,6 +3062,7 @@ public class MemcachedClient {
 					log.info( "++++ validate of session id: " + sid + " from cache was a abort" );
 
 				// return sock to pool and bail here
+				sock.clearEOL();
 				sock.close();
 				sock = null;
 				throw new IncompatibleLeaseException("validate Session aborted.");
@@ -3067,6 +3070,7 @@ public class MemcachedClient {
 				log.error( "++++ error validate sess: " + sid );
 				log.error( "++++ server response: " + line );
 
+				sock.clearEOL();
 				sock.close();
 				sock = null;
 				return false;
@@ -3127,11 +3131,12 @@ public class MemcachedClient {
 
 			// if we get appropriate response back, then we return true
 			String line = sock.readLine();
-			if ( OK.equals( line ) ) {
+			if ( SUCCESS.equals( line ) ) {
 				if ( log.isInfoEnabled() )
 					log.info( "++++ lCommit of session id: " + sid + " from cache was a success" );
 
 				// return sock to pool and bail here
+				sock.clearEOL();
 				sock.close();
 				sock = null;
 				return true;
@@ -3140,6 +3145,7 @@ public class MemcachedClient {
 					log.info( "++++ lCommit of session id: " + sid + " from cache was a abort" );
 
 				// return sock to pool and bail here
+				sock.clearEOL();
 				sock.close();
 				sock = null;
 
@@ -3148,6 +3154,7 @@ public class MemcachedClient {
 				log.error( "++++ error lCommit sess: " + sid );
 				log.error( "++++ server response: " + line );
 
+				sock.clearEOL();
 				sock.close();
 				sock = null;
 				return false;
