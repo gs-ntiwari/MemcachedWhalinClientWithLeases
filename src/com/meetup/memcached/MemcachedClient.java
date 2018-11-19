@@ -747,7 +747,7 @@ public class MemcachedClient {
 	 * @return true, if the data was successfully stored
 	 */
 	public boolean lset( String key, Object value , String sess_id) {
-		return lset( "set", key, value, null, null, primitiveAsString, sess_id );
+		return lset( "lset", key, value, null, null, primitiveAsString, sess_id );
 	}
 
 	/**

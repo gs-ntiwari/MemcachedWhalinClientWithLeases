@@ -337,6 +337,101 @@ public class UnitTests {
 	}
 
 
+	private static void testGet(){
+    	try {
+    		mc.set("s1_key1", "value2");
+    		mc.set("lease_S_key1", "s1");
+    		mc.set("session_s1", "a lease_S_key1");
+			assert "value2".equals(mc.lget("key1", "s1", false));
+			assert "value1".equals(mc.lget("key1", "s2", false));
+   			}
+		catch(Exception e)
+		{
+			assert false;
+			System.out.println(e.getMessage());
+		}
+	}
+
+	/**
+	 * Read only session.
+	 * @param mc1
+	 */
+	public static void testSession1(MemcachedClient mc1) throws Exception {
+		cleanup(mc1);
+		String key1="key1", key2="key2";
+		//String sid = "sid";
+		String sess_id="s1";
+		try {
+			mc1.lget(key1,sess_id);
+			mc1.lset(key1, "val1",sess_id);
+			mc1.lget(key2,sess_id);
+			mc1.lset(key2, "val2",sess_id);
+			mc1.lcommit(sess_id);
+			assert mc1.get(key1).equals("val1");
+			assert mc1.get(key2).equals("val2");
+		} catch (Exception e) {
+			try {
+			} catch (IncompatibleLeaseException e1) {
+				// TODO Auto-generated catch block
+				e1.printStackTrace();
+			}
+		}
+
+		System.out.println("Test session 1 OK.");
+	}
+
+
+	/**
+	 *
+	 * @param mc1
+	 */
+	public static void testSession2(MemcachedClient mc1) throws Exception {
+		cleanup(mc1);
+
+		String key1="key1", key2="key2";
+		String sid = "sid", sid2 = "sid2";
+
+		try {
+			mc1.lget(key1, sid, false);
+			mc1.lset(key1, "val1", sid);
+			mc1.lvalidate(sid);
+			mc1.lcommit(sid);
+		} catch (Exception e) {
+			try {
+				mc1.labort(sid);
+			} catch (IncompatibleLeaseException e1) {
+				// TODO Auto-generated catch block
+				e1.printStackTrace();
+			}
+		}
+
+		assert mc1.get(key1).equals("val1");
+
+		try {
+			assert mc1.lget(key2, sid2) == null;
+			mc1.lset(key2, sid2,"val2");
+			assert "val1".equals(mc1.lget(key1, sid2));
+			assert "val2".equals(mc1.lget(key2, sid2));
+		} catch (Exception e) {
+			try {
+				mc1.labort(sid2);
+			} catch (IncompatibleLeaseException e1) {
+				// TODO Auto-generated catch block
+				e1.printStackTrace();
+			}
+		}
+
+		System.out.println("Test session 2 OK.");
+	}
+
+	public static void  cleanup(MemcachedClient mc)
+	{
+		String[] serverlist = {
+				"localhost:11211"
+		};
+		mc.flushAll(serverlist);
+	}
+
 	/**
 	 * This runs through some simple tests of the MemcacheClient.
 	 *
@@ -347,30 +442,20 @@ public class UnitTests {
 	 *
 	 * @param args the command line arguments
 	 */
-	public static void main(String[] args) {
+	public static void main(String[] args) throws Exception {
 
 		BasicConfigurator.configure();
 		org.apache.log4j.Logger.getRootLogger().setLevel( Level.WARN );
 
-		if ( !UnitTests.class.desiredAssertionStatus() ) {
+	/*	if ( !UnitTests.class.desiredAssertionStatus() ) {
 			System.err.println( "WARNING: assertions are disabled!" );
 			try { Thread.sleep( 3000 ); } catch ( InterruptedException e ) {}
-		}
-		
+		}*/
+
 		String[] serverlist = {
-			"192.168.1.50:1620",
-			"192.168.1.50:1621",
-			"192.168.1.50:1622",
-			"192.168.1.50:1623",
-			"192.168.1.50:1624",
-			"192.168.1.50:1625",
-			"192.168.1.50:1626",
-			"192.168.1.50:1627",
-			"192.168.1.50:1628",
-			"192.168.1.50:1629"
+			"localhost:11211"
 		};
 
-		Integer[] weights = { 1, 1, 1, 1, 10, 5, 1, 1, 1, 3 };
 
 		if ( args.length > 0 )
 			serverlist = args;
@@ -378,17 +463,18 @@ public class UnitTests {
 		// initialize the pool for memcache servers
 		SockIOPool pool = SockIOPool.getInstance( "test" );
 		pool.setServers( serverlist );
-		pool.setWeights( weights );
-		pool.setMaxConn( 250 );
+		pool.setMaxConn(1 );
 		pool.setNagle( false );
 		pool.setHashingAlg( SockIOPool.CONSISTENT_HASH );
 		pool.initialize();
 
         mc = new MemcachedClient( "test" );
-		mc2 = new MemcachedClient("test");
-		mc3 = new MemcachedClient("test");
-		mc4 = new MemcachedClient("test");
-		runAlTests( mc );
+		mc.flushAll(serverlist);
+		//mc2 = new MemcachedClient("test");
+		//mc3 = new MemcachedClient("test");
+		//mc4 = new MemcachedClient("test");
+		//runAlTests( mc );
+		testGet();
 	}
 
 	/** 
